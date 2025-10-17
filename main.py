@@ -150,8 +150,10 @@ cv2.imwrite('TracedImg.png', traceImg)
 cv2.destroyAllWindows()
 # vx, vy velocities
 vx, vy = vf.xyVelocity(nodeArray)
-
-for i in range(len(vx)):
-    print(f"X Velocity: {vx[i]}, Y Velocity: {vy[i]}")
 # V/theta velocities
+v, theta = vf.vthetaVelocity(nodeArray)
+# print
+for i in range(len(vx)):
+    print(f"X Velocity: {vx[i]}, Y Velocity: {vy[i]}, Total Velocity: {v[i]}, Heading Angle (deg): {theta[i]}")
+
 # TBD
