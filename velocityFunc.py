@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 def xyVelocity(nodes):
 
@@ -23,3 +24,32 @@ def xyVelocity(nodes):
     vy = np.array(vy)
 
     return vx, vy
+
+
+def vthetaVelocity(nodes):
+
+    v = []
+    theta = []
+
+    prev = None
+    for node in nodes:
+        if prev == None:
+            prev = node
+            continue
+
+        dx = node.x - prev.x
+        dy = node.y - prev.y
+        dt = node.t - prev.t
+
+        vel = math.sqrt((dx/dt)**2 + (dy/dt)**2) # sqrt(x^2 + y^2)
+        rad = math.atan(dy/dx)
+        deg = rad*180/math.pi
+
+        prev = node
+        v.append(vel)
+        theta.append(deg)
+
+    v = np.array(v)
+    theta = np.array(theta)
+
+    return v, theta
