@@ -4,6 +4,7 @@ import numpy as np
 from node import Node
 import velocityFunc as vf
 import time
+import math
 
 ## Read initial parameters/code settings
 
@@ -48,7 +49,9 @@ velData = open('velocityDataOut.txt', 'w')
 velData.write("vx, vy, v, theta,\n")
 
 recording = False # not recording by default
-nodeArray = [] # empty array to store Nodes
+info = False # info display off by default
+allNodes = [] # empty array to store all Nodes (data not saved)
+recNodes = [] # empty array to store recorded Nodes
 dispIndex = -1 # tracking frame by default
 
 ## Enter loop to display camera feed
@@ -89,19 +92,21 @@ while True:
         # draw rectangle
         cv2.rectangle(track, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
+        # determine centroid & current time
+        center_x = x + w//2
+        center_y = y + h//2
+        curr_time = time.time()
+
+        allNodes.append(Node(center_x, center_y, curr_time))
+
         # check if recording to save specific frame data
         if recording == True:
-
-            # determine centroid
-            center_x = x + w//2
-            center_y = y + h//2
-            curr_time = time.time()
 
             # for traced path image, mark centroid dot
             cv2.circle(traceImg, (center_x, center_y), 1, (0, 0, 255), -1)
 
             # velocity calculation data 
-            nodeArray.append(Node(center_x, center_y, curr_time))
+            recNodes.append(Node(center_x, center_y, curr_time))
 
             # save raw data to file
             rawData.write(f"{center_x}, {center_y}, {curr_time},\n")
@@ -115,16 +120,30 @@ while True:
         outproc_mp4.write(track)
 
     # initialize array of video streams (for 1-7 key functionality)
-    disp = [frame, blur, fgmask, thresh, dilated, cont_frame, track]
+    dispArr = [frame, blur, fgmask, thresh, dilated, cont_frame, track]
+    disp = dispArr[dispIndex].copy()
     
-    ## Display video feed
+    if recording == True: 
+        # display recording icon in feed
+        cv2.circle(disp, (50, 50), 15, (0, 0, 255), -1)
+    
+    if info == True:
+        cv2.putText(disp, "I", (frame_W-70, 70),cv2.FONT_HERSHEY_COMPLEX,2,(240,180,50),2)
+        if len(allNodes) > 2: # check if at startup (empty array)
 
-    if recording == True: # display recording icon in feed
-        rec = disp[dispIndex].copy()
-        cv2.circle(rec, (50, 50), 20, (0, 0, 255), -1)
-        cv2.imshow('Display', rec)
-    else:
-        cv2.imshow('Display', disp[dispIndex])
+            # calculate values at most recent node data
+            vxi, vyi = vf.xyVelocity(allNodes[-2:])
+            vi, thetai = vf.vthetaVelocity(allNodes[-2:])
+
+            # display info on screen
+            cv2.putText(disp, f"Vel x : {math.floor(vxi[0])}", (20,frame_H-50),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
+            cv2.putText(disp, f"Vel y : {math.floor(vyi[0])}", (160,frame_H-50),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
+            cv2.putText(disp, f"Tot V : {math.floor(vi[0])}", (20,frame_H-20),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
+            cv2.putText(disp, f"Theta : {math.floor(thetai[0])}", (160,frame_H-20),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
+
+
+    ## Display video feed
+    cv2.imshow('Display', disp)
 
     ## User key input processing
     waitKey = cv2.waitKey(10) & 0xFF #delay in ms between checks
@@ -132,6 +151,8 @@ while True:
         break
     elif waitKey == ord('r'): # toggle recording
         recording = not recording
+    elif waitKey == ord('i'): # toggle info display
+        info = not info
     elif waitKey== ord('1'): # view raw frame
         dispIndex = 0
     elif waitKey== ord('2'): # view blur
@@ -163,9 +184,9 @@ cv2.imwrite('TracedImg.png', traceImg)
 
 cv2.destroyAllWindows()
 # vx, vy velocities
-vx, vy = vf.xyVelocity(nodeArray)
+vx, vy = vf.xyVelocity(recNodes)
 # V/theta velocities
-v, theta = vf.vthetaVelocity(nodeArray)
+v, theta = vf.vthetaVelocity(recNodes)
 # print velocity data to file and terminal
 for i in range(len(vx)):
     velData.write(f"{vx[i]}, {vy[i]}, {v[i]}, {theta[i]},\n")
