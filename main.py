@@ -20,7 +20,7 @@ binThresh = 25
 dilIter = 2
 
 # min contour area (square pixels)
-contArea = 500
+minArea = 500
 
 ## Establish camera connection and initialize out files
 capture = cv2.VideoCapture(videoIn)
@@ -40,6 +40,12 @@ outproc_mp4 = cv2.VideoWriter('processedCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'
 
 # Initialize Tracing Image as a black rgb frame
 traceImg = np.zeros((frame_H, frame_W, 3), dtype=np.uint8)
+
+# Initialize Data Files (comma separated list)
+rawData = open('rawDataOut.txt', 'w')
+rawData.write("x, y, z,\n")
+velData = open('velocityDataOut.txt', 'w')
+velData.write("vx, vy, v, theta,\n")
 
 recording = False # not recording by default
 nodeArray = [] # empty array to store Nodes
@@ -74,7 +80,7 @@ while True:
 
     # Loop through possible objects and draw rectangles
     for contour in contours:
-        if cv2.contourArea(contour) < contArea: # Filter small contours (square pixel area)
+        if cv2.contourArea(contour) < minArea: # Filter small contours (square pixel area)
             continue
 
         # determine bounding rectangle dimensions
@@ -89,28 +95,36 @@ while True:
             # determine centroid
             center_x = x + w//2
             center_y = y + h//2
+            curr_time = time.time()
 
             # for traced path image, mark centroid dot
             cv2.circle(traceImg, (center_x, center_y), 1, (0, 0, 255), -1)
 
-            # velocity calculation data
-            nodeArray.append(Node(center_x, center_y, time.time()))
+            # velocity calculation data 
+            nodeArray.append(Node(center_x, center_y, curr_time))
+
+            # save raw data to file
+            rawData.write(f"{center_x}, {center_y}, {curr_time},\n")
 
 
     ## Check if recording for file output
     if recording == True:
+
+        # save tracked object data to video file
         outraw_mp4.write(frame)
         outproc_mp4.write(track)
 
-        # save tracked object data to array and video file
-        # display recording icon in feed
-
-    ## Display video feed
-    # set display-frame to track-frame by default
+    # initialize array of video streams (for 1-7 key functionality)
     disp = [frame, blur, fgmask, thresh, dilated, cont_frame, track]
     
+    ## Display video feed
 
-    cv2.imshow('Display', disp[dispIndex])
+    if recording == True: # display recording icon in feed
+        rec = disp[dispIndex].copy()
+        cv2.circle(rec, (50, 50), 20, (0, 0, 255), -1)
+        cv2.imshow('Display', rec)
+    else:
+        cv2.imshow('Display', disp[dispIndex])
 
     ## User key input processing
     waitKey = cv2.waitKey(10) & 0xFF #delay in ms between checks
@@ -133,7 +147,7 @@ while True:
     elif waitKey== ord('7'): # view tracked frame
         dispIndex = 6
 
-# release at termination of video monitor
+# release media resources at termination of video monitor
 capture.release()
 outraw_mp4.release()
 outproc_mp4.release()
@@ -152,8 +166,13 @@ cv2.destroyAllWindows()
 vx, vy = vf.xyVelocity(nodeArray)
 # V/theta velocities
 v, theta = vf.vthetaVelocity(nodeArray)
-# print
+# print velocity data to file and terminal
 for i in range(len(vx)):
+    velData.write(f"{vx[i]}, {vy[i]}, {v[i]}, {theta[i]},\n")
     print(f"X Velocity: {vx[i]}, Y Velocity: {vy[i]}, Total Velocity: {v[i]}, Heading Angle (deg): {theta[i]}")
+
+# release data files
+rawData.close()
+velData.close()
 
 # TBD
