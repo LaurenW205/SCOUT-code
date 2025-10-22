@@ -13,17 +13,18 @@ You can cycle through the camera view options with keys 1-7. The views are as fo
 6. Contoured Frame
 7. Tracking Frame
 
-Pressing R will start recording (no indicator as of yet)
-Pressing R will also stop recording (again no indicator)
-
+Pressing R will start/stop recording
 Starting/Stopping video multiple times during one session will stitch them together in the output video file.
+
+Pressing I will display the info overlay
+This overlay will show current calculated velocity & heading values for a single object moving through the frame
 
 After exiting the camera view, an image marking the path of the object across every frame is shown. Only one object can be tracked with this method at this time.
 Again, press Q to exit.
 
 Velocity calculations using these marked positions will print out in units of pixels per second.
 
-Output Files: rawCap.mp4, processedCap.mp4, and TracedImg.png 
+Output Files: rawCap.mp4, processedCap.mp4, TracedImg.png, rawDataOut.txt, and velocityDataOut.txt
 
 ## Basic code flow Layout below:
 
