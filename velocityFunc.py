@@ -42,7 +42,11 @@ def vthetaVelocity(nodes):
         dt = node.t - prev.t
 
         vel = math.sqrt((dx/dt)**2 + (dy/dt)**2) # sqrt(x^2 + y^2)
-        rad = math.atan(dy/dx)
+        rad = None
+        if dx == 0: # edge case to prevent divide by 0 error
+            rad = math.pi / 2
+        else:
+            rad = math.atan(dy/dx)
         deg = rad*180/math.pi
 
         prev = node
