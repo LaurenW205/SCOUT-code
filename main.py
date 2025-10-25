@@ -45,7 +45,7 @@ traceImg = np.zeros((frame_H, frame_W, 3), dtype=np.uint8)
 
 # Initialize Data Files (comma separated list)
 rawData = open('rawDataOut.txt', 'w')
-rawData.write("id, x, y, z,\n")
+rawData.write("id, x, y, t,\n")
 velData = open('velocityDataOut.txt', 'w')
 velData.write("id, vx, vy, v, theta,\n")
 
@@ -117,7 +117,7 @@ while True:
             recNode = Node(center_x, center_y, curr_time, recFrameCount)
 
             # set new region of interest and update idCount
-            idCount = recNode.setROI(prevNodes, idCount, (frame_W, frame_H))
+            idCount = recNode.trackID(prevNodes, idCount, (frame_W, frame_H))
 
             recNodes.append(recNode)
 
