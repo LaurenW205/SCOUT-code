@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from node import Node
 import velocityFunc as vf
+import track as tr
 import time
 import math
 
@@ -44,14 +45,17 @@ traceImg = np.zeros((frame_H, frame_W, 3), dtype=np.uint8)
 
 # Initialize Data Files (comma separated list)
 rawData = open('rawDataOut.txt', 'w')
-rawData.write("x, y, z,\n")
+rawData.write("id, x, y, z,\n")
 velData = open('velocityDataOut.txt', 'w')
-velData.write("vx, vy, v, theta,\n")
+velData.write("id, vx, vy, v, theta,\n")
 
 recording = False # not recording by default
+recFrameCount = 0 # current frame count of recorded frames
+idCount = 0 # current number of object IDs (tracked objects)
 info = False # info display off by default
 allNodes = [] # empty array to store all Nodes (data not saved)
 recNodes = [] # empty array to store recorded Nodes
+roiArr = [] # empty region-of-interest array
 dispIndex = -1 # tracking frame by default
 
 ## Enter loop to display camera feed
@@ -79,7 +83,9 @@ while True:
 
     # Find contours [https://docs.opencv.org/3.4/d4/d73/tutorial_py_contours_begin.html]
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cont_frame = cv2.drawContours(frame.copy(), contours,  -1,(0,255,0), 3)
+    cont_frame = cv2.drawContours(frame.copy(), contours,  -1, (0,255,0), 3)
+
+    prevNodes = Node.getPrevNodes(recNodes)
 
     # Loop through possible objects and draw rectangles
     for contour in contours:
@@ -97,19 +103,26 @@ while True:
         center_y = y + h//2
         curr_time = time.time()
 
-        allNodes.append(Node(center_x, center_y, curr_time))
+        allNodes.append(Node(center_x, center_y, curr_time, -1))
 
         # check if recording to save specific frame data
         if recording == True:
+            # update frame count
+            recFrameCount = recFrameCount + 1
 
             # for traced path image, mark centroid dot
             cv2.circle(traceImg, (center_x, center_y), 1, (0, 0, 255), -1)
 
             # velocity calculation data 
-            recNodes.append(Node(center_x, center_y, curr_time))
+            recNode = Node(center_x, center_y, curr_time, recFrameCount)
+
+            # set new region of interest and update idCount
+            idCount = recNode.setROI(prevNodes, idCount, (frame_W, frame_H))
+
+            recNodes.append(recNode)
 
             # save raw data to file
-            rawData.write(f"{center_x}, {center_y}, {curr_time},\n")
+            rawData.write(f"{recNode.id}, {center_x}, {center_y}, {curr_time},\n")
 
 
     ## Check if recording for file output
@@ -123,8 +136,8 @@ while True:
     dispArr = [frame, blur, fgmask, thresh, dilated, cont_frame, track]
     disp = dispArr[dispIndex].copy()
     
+    # display recording icon in feed
     if recording == True: 
-        # display recording icon in feed
         cv2.circle(disp, (50, 50), 15, (0, 0, 255), -1)
     
     if info == True:
@@ -183,14 +196,27 @@ while cv2.waitKey(1) != ord('q'):
 cv2.imwrite('TracedImg.png', traceImg)
 
 cv2.destroyAllWindows()
-# vx, vy velocities
-vx, vy = vf.xyVelocity(recNodes)
-# V/theta velocities
-v, theta = vf.vthetaVelocity(recNodes)
+
 # print velocity data to file and terminal
-for i in range(len(vx)):
-    velData.write(f"{vx[i]}, {vy[i]}, {v[i]}, {theta[i]},\n")
-    print(f"X Velocity: {vx[i]}, Y Velocity: {vy[i]}, Total Velocity: {v[i]}, Heading Angle (deg): {theta[i]}")
+for j in range(idCount):
+    # correct index '0 to (idCount-1)' into '1 to idCount'
+    j = j + 1
+
+    # extract nodes by ID
+    currNodes = Node.getNodesByID(recNodes, j)
+
+    # vx, vy velocities
+    vx, vy = vf.xyVelocity(currNodes)
+
+    # V/theta velocities
+    v, theta = vf.vthetaVelocity(currNodes)
+
+    # print relevant id (terminal only)
+    print(f"Object ID: {j}")
+    # loop through velocity values
+    for i in range(len(vx)):
+        velData.write(f"{j}, {vx[i]}, {vy[i]}, {v[i]}, {theta[i]},\n")
+        print(f"     X Velocity: {vx[i]}, Y Velocity: {vy[i]}, Total Velocity: {v[i]}, Heading Angle (deg): {theta[i]}")
 
 # release data files
 rawData.close()
