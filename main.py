@@ -8,6 +8,7 @@ from node import Node
 import velocityFunc as vf
 import time
 import math
+import img
 
 ##############################################################
 ## 0.2 ## Read initial parameters/code settings - USER DEFINED
@@ -45,8 +46,6 @@ frame_H = int(capture.get(4))
 outraw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
 outproc_mp4 = cv2.VideoWriter('processedCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
 
-# Initialize Tracing Image as a black rgb frame
-traceImg = np.zeros((frame_H, frame_W, 3), dtype=np.uint8)
 
 # Initialize Data Files (comma separated list)
 rawData = open('rawDataOut.txt', 'w')
@@ -93,6 +92,10 @@ while True:
 
     # separate video frame-stream saved to outproc_mp4 file, draws tracking boxes on video
     track = frame.copy() 
+
+    # check if recording to update frame_num counter
+    if recording == True:
+        recFrameCount = recFrameCount + 1
 
     #####################################################
     ## 2.2 ## Apply image filters to find object contours
@@ -142,8 +145,6 @@ while True:
 
         # check if recording to save specific frame data
         if recording == True:
-            # update frame count
-            recFrameCount = recFrameCount + 1
 
             # velocity calculation data 
             recNode = Node(center_x, center_y, curr_time, recFrameCount)
@@ -158,9 +159,6 @@ while True:
             ###########################
             ## 4.1 ## Save raw node data to file
 
-            # for traced-path image, mark centroid dot 
-            cv2.circle(traceImg, (center_x, center_y), 1, (0, 0, 255), -1)
-
             # save raw data to file
             rawData.write(f"{recNode.id}, {center_x}, {center_y}, {curr_time},\n")
 
@@ -171,9 +169,6 @@ while True:
 
         # save data to allNodes, distinguish from recorded data by frame_num = -1 
         allNodes.append(Node(center_x, center_y, curr_time, -1))
-
-
-
 
     ## 4.3 ## Video file output
     # # Check if recording
@@ -254,15 +249,7 @@ cv2.destroyAllWindows()
 ## 7.1 ## Display traced image and save to file
 
 # display img
-cv2.imshow("Traced Path", traceImg)
-while cv2.waitKey(1) != ord('q'):
-    pass
-
-# save traced image to file
-cv2.imwrite('TracedImg.png', traceImg)
-
-# close window
-cv2.destroyAllWindows()
+img.tracer('TracedImgFunc.png', recNodes, (frame_W, frame_H), idCount)
 
 #################################
 ## 7.2 ## Print terminal output
