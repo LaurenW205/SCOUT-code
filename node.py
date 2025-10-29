@@ -1,3 +1,29 @@
+## class Node(x, y, t, frame_num)
+#
+# @initParam x - integer denoting x coordinate (in pixels)
+# @initParam y - integer denoting y coordinate (in pixels)
+# @initParam x - double denoting time at (x,y) position (in seconds)
+# @initParam frame_num - frame number/index since data recording began
+#
+# @Param id - unique identifier to track Nodes across frames
+# @Param dxdf - Node velocity in x pixels per frame
+# @Param dydf - Node velocity in y pixels per frame
+# @Param search_r - search radius (square) for region of interest
+#
+# @Function self.trackID(prevNodes, currIDCount, frameDim)
+#   param prevNodes - array of Nodes to look for in current frame ([] if first iteration)
+#   param currIDCount - current number of unique objects tracked
+#   param frameDim - tuple containing frame dimensions, form: (width, height) 
+#   returns: Current ID count (number of tracked objects) for main function variable
+#
+# @Function Node.getPrevNodes(allNodes)
+#   param allNodes - array of all recorded Nodes
+#   returns: array of Nodes from previous frame (Nodes to check for in current frame)
+#
+# @Function Node.getNodeByID(allNodes, id)
+#   param allNodes - array of all recorded Nodes
+#   param id - Node id to extract from allNodes
+#   returns: array of Nodes with matching id
 
 
 class Node:
@@ -12,7 +38,7 @@ class Node:
         self.id = 0
         self.dxdf = 0
         self.dydf = 0
-        self.search = 0
+        self.search_r = 0
         
     def trackID(self, prevNodes, currIDCount, frameDim):
 
@@ -85,11 +111,17 @@ class Node:
 
         prevNodes = []
         index = -1
+
+        # extract most recent node's frame number
         frame_num = allNodes[index].frame_num
+
+        # filter by frame number
         while allNodes[index].frame_num == frame_num:
+            # save to output array
             prevNodes.append(allNodes[index])
             index = index - 1
-            # if exceeding array index break loop
+
+            # if exceeding array index, break loop
             if -index > frame_num:
                 break
 
