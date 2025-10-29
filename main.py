@@ -115,7 +115,7 @@ while True:
     # create frame with contours drawn as a display option (keys 1-7)
     cont_frame = cv2.drawContours(frame.copy(), contours,  -1, (0,255,0), 3)
 
-    ### Discretize objects
+    ### 3 ### Discretize objects
     #########################################################
     ## 3.1 ## Track objects across frames
 
@@ -290,3 +290,4 @@ for j in range(idCount):
 # release data files
 rawData.close()
 velData.close()
+
