@@ -42,19 +42,19 @@ class Node:
         
     def trackID(self, prevNodes, currIDCount, frameDim):
 
-        # extract frame dimensions and split into thirds
+        # extract frame dimensions and split into 3 sections (1:6:1 parts distribution)
         frame_W = frameDim[0]
-        sect_1x = frame_W//3
-        sect_2x = 2*frame_W//3
+        sect_1x = frame_W//8
+        sect_2x = 7*frame_W//8
         frame_H = frameDim[1]
-        sect_1y = frame_H//3
-        sect_2y = 2*frame_H//3
+        sect_1y = frame_H//8
+        sect_2y = 7*frame_H//8
 
         # excludes first Node ever to prevent array segmentation fault
         if currIDCount > 0:
             for prev in prevNodes:
 
-                # define ROI center
+                # define ROI center for prev
                 df = self.frame_num - prev.frame_num
                 x = prev.x + prev.dxdf * df
                 y = prev.y + prev.dydf * df
@@ -72,7 +72,7 @@ class Node:
                     self.id = prev.id
                     self.dxdf = (self.x - prev.x)/df
                     self.dydf = (self.y - prev.y)/df
-                    self.search_r = 100
+                    self.search_r = 50
                     break
                 
                 else: # go to next node
@@ -99,7 +99,7 @@ class Node:
             else:                 # center
                 self.dydf = 0
             
-            self.search_r = 300 # extra large for first guess 
+            self.search_r = 100 # extra large for first guess 
 
         return currIDCount
     
@@ -122,9 +122,9 @@ class Node:
             index = index - 1
 
             # if exceeding array index, break loop
-            if -index > frame_num:
+            if -index > len(allNodes):
                 break
-
+        
         return prevNodes
     
     @staticmethod
@@ -135,4 +135,3 @@ class Node:
                 idNodes.append(node)
         
         return idNodes
-        
