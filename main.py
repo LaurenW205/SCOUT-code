@@ -175,7 +175,8 @@ while True:
 
 
 
-    ## 4.3 ## Check if recording for video file output
+    ## 4.3 ## Video file output
+    # # Check if recording
     if recording == True:
 
         # save tracked object data to video file
@@ -250,7 +251,7 @@ cv2.destroyAllWindows()
 
 ### 7 ### Post-processing data logging 
 #######################################
-## 7.1 ## traced image display and file
+## 7.1 ## Display traced image and save to file
 
 # display img
 cv2.imshow("Traced Path", traceImg)
@@ -264,7 +265,7 @@ cv2.imwrite('TracedImg.png', traceImg)
 cv2.destroyAllWindows()
 
 #################################
-## 7.2 ## Terminal printed output
+## 7.2 ## Print terminal output
 
 # print velocity data to file and terminal
 for j in range(idCount):
@@ -290,4 +291,3 @@ for j in range(idCount):
 # release data files
 rawData.close()
 velData.close()
-
