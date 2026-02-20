@@ -24,6 +24,8 @@ import numpy as np
 import glob
 import time
 import math
+import node
+import kalman
 
 def initCam(source): # connect video stream and calibrate lens distortion
     capture = cv2.VideoCapture(source)
@@ -151,6 +153,9 @@ dispIndex = 0
 raw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
 contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
 
+# object node counter (for unique node ids)
+nodeCount = 0
+
 while True:
     success, frame = capture.read()
     if not success: # check if successful
@@ -194,9 +199,17 @@ while True:
         (x, y, z) = xyzTransform(c_x, c_y, unitLength, targetObjSize, focalLength, (frame_W, frame_H))
 
         # save object position
-        obj = [x, y, z, currTime]
-        print(obj)
+        nodeCount += 1
+        obj = node(nodeCount, (x, y, z), currTime)
+        # populate/update remaining node data
+        obj = kalman.kalmanFilter(obj, prevFrameNodes)
+        # save to array
         currFrameNodes.append(obj)
+        print(obj)
+
+        # if object is not a new object, decrement
+        if nodeCount == obj.id:
+            nodeCount -= 1
 
     # initialize array of video streams (for 1-7 key functionality)
     dispArr = [frame, undistorted, cropped, filtered, cont_frame]
