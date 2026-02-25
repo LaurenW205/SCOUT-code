@@ -156,14 +156,17 @@ contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'),
 # object node counter (for unique node ids)
 nodeCount = 0
 
+# calculate matrix to undistort camera image
+ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
+
+# array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
+COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
+
 while True:
     success, frame = capture.read()
     if not success: # check if successful
         break
 
-    ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
-    #mapx, mapy = cv2.initUndistortRectifyMap(mtx, dist, None, ncmtx, (frame_W,frame_H), 5)
-    #undistorted = cv2.remap(filtered, mapx, mapy, cv2.INTER_LINEAR)
     undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
     
     cropped = undistorted[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
@@ -173,6 +176,7 @@ while True:
     contours, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     cont_frame = cropped.copy()
+    track = cropped.copy()
 
     # loop through all objects in current frame
     prevFrameNodes = currFrameNodes
@@ -211,8 +215,15 @@ while True:
         if nodeCount == obj.id:
             nodeCount -= 1
 
+        # update tracking frame
+        colorIdx = obj.id % 7
+        color = COLORS[colorIdx]
+        cv2.rectangle(track, (x, y), (x + w, y + h), color, 2)
+
+
+
     # initialize array of video streams (for 1-7 key functionality)
-    dispArr = [frame, undistorted, cropped, filtered, cont_frame]
+    dispArr = [frame, undistorted, cropped, filtered, cont_frame, track]
     disp = dispArr[dispIndex].copy()
 
     # write to file
@@ -235,6 +246,8 @@ while True:
         dispIndex = 3
     elif waitKey== ord('5'): # view contours on frame
         dispIndex = 4
+    elif waitKey== ord('6'): # view tracking frame
+        dispIndex = 5
 
 
 capture.release()
