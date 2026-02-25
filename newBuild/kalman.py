@@ -1,256 +1,165 @@
-# Detect red pixels in frame DONE
-    # filter R > minThresh
-    # filter BG < maxDiff
-
-# estimate object size DONE
-    # contour filtered image
-    # transform contour area -> pixel length
-        # account for various orientations of LunaSat
-
-# add debug ui DONE
-
-# estimate object distance
-    # transform pixel coordinates to XYZ DONE
-    # correct for lens distortion
-
-# track objects across frames based on position
-    # basic kalman filter to estimate next position
-    # weighted selection matrix 
-
-# estimate object telemtery: pos, vel, acc
-
-import cv2
 import numpy as np
-import glob
-import time
-import math
 import node
-import kalman
 
-def initCam(source): # connect video stream and calibrate lens distortion
-    capture = cv2.VideoCapture(source)
+# helper functions
 
-    # test video stream connection
-    success, _ = capture.read()
-    if not success:
-        print(f"unable to connect to video stream at source:{source}")
-        return 0, capture, None, None
+def updatePosition(prev, measured, Kn):
+
+    # filtering eqution: x_n,n = x_n,n-1 + Kn(z_n - x_n,n-1)
+    curr_x = prev[0] + Kn[0]*( measured[0] - prev[0] )
+    curr_y = prev[1] + Kn[1]*( measured[1] - prev[1] )
+    curr_z = prev[2] + Kn[2]*( measured[2] - prev[2] )
+
+    return (curr_x, curr_y, curr_z)
+
+def updateCovariance(prev_variance, Kn):
+    var_x = (1 - Kn[0]) * prev_variance[0]
+    var_y = (1 - Kn[1]) * prev_variance[1]
+    var_z = (1 - Kn[2]) * prev_variance[2]
+
+    return (var_x, var_y, var_z)
+
+def updateGain(prev_variance, measurement_variance):
+    Kn_x = prev_variance[0] / ( prev_variance[0] + measurement_variance[0] )
+    Kn_y = prev_variance[1] / ( prev_variance[1] + measurement_variance[1] )
+    Kn_z = prev_variance[2] / ( prev_variance[2] + measurement_variance[2] )
+
+    return (Kn_x, Kn_y, Kn_z)
+
+def stateExtrapolation(position, dt, velocity):
+    next_x = position[0] + dt*velocity[0]
+    next_y = position[1] + dt*velocity[1]
+    next_z = position[2] + dt*velocity[2]
+
+    return (next_x, next_y, next_z)
+
+def selectNode(prevFrameNodes, pos_xyz, t, range):
+    x = pos_xyz [0]
+    y = pos_xyz [1]
+    z = pos_xyz [2]
+    # weight each node within search area by proximity to pos_xyz
+    nodeWeights = []
+    maxWeightIndex = -1
+    currIndex = 0
+    for node in prevFrameNodes:
+        xDiff = x - node.nx
+        yDiff = y - node.ny
+        zDiff = z - node.nz
+
+        if xDiff < range and yDiff < range and zDiff < range:
+            if maxWeightIndex == -1: # if any node within range, update this value
+                maxWeightIndex = 0
+            weight = np.sqrt( (xDiff)**2 + (yDiff)**2 + (zDiff)**2 )
+            nodeWeights.append(weight)
+            if nodeWeights[maxWeightIndex] < weight:
+                maxWeightIndex = currIndex
+        else:
+            nodeWeights.append(0)
+
+        currIndex += 1
+
+    if maxWeightIndex == -1:
+        return None
+    
+    # select a node
+    return prevFrameNodes[maxWeightIndex]
+
+def initNode(node):
+    if node.x != None:
+        return None
+    
+    node.x = node.mx
+    node.y = node.my
+    node.z = node.mz
+
+    node.varx = 0.1
+    node.vary = 0.1
+    node.varz = 0.1
+
+
+
+
+# Primary function:
+
+def kalmanFilter(node, prevFrameNodes):
+    # measurement uncertainty
+    mvar_xyz = (0.1, 0.1, 0.1) # measurement variance for x, y, and z directions [meters]
+    # velocity uncertainty [m/s]?
+    vvar = 0.3
+    # range in meters to form search cube
+    searchArea = 1 
+
+    # node init (check if within previous frame)
+    node = initNode(node)
+    # init position estimate
+    curr_xyz = (node.x, node.y, node.z)
+    # init estimate uncertainty
+    pvar_xyz = (0.1, 0.1, 0.1) 
+    # init velocity estimate (no movement)
+    node.vx = 0
+    node.vy = 0
+    node.vz = 0
+    # init dt (updated if previous node exists)
+    dt = 0
+    # init kalman gain
+    Kn_xyz = updateGain(pvar_xyz, mvar_xyz)
+    node.kx = Kn_xyz[0]
+    node.ky = Kn_xyz[1]
+    node.kz = Kn_xyz[2]
+    # init estimate uncertainty
+    var_xyz = updateCovariance(pvar_xyz, Kn_xyz)
+    node.varx = var_xyz[0]
+    node.vary = var_xyz[1]
+    node.varz = var_xyz[2]
+
+    # Weighted Selector
+    prevNode = selectNode(prevFrameNodes, curr_xyz, node.t, searchArea)
+
+    # State Update, skip initial node
+    if prevNode != None:
+        # extract previous node values
+        pvar_xyz = (prevNode.varx, prevNode.vary, prevNode.varz)
+        prev_xyz = (prevNode.x, prevNode.y, prevNode.z)
         
-    # lens calibration code
+        # update kalman gain
+        Kn_xyz = updateGain(pvar_xyz, mvar_xyz)
+        # update estimate uncertainty
+        var_xyz = updateCovariance(pvar_xyz, Kn_xyz)
+        # update position estimate
+        curr_xyz = updatePosition(prev_xyz, node.m_pos, Kn_xyz)
+
+        dt = node.t - prevNode.t
+
+        # update node data structure
+        node.id = prevNode.id
+
+        node.varx = var_xyz[0]
+        node.vary = var_xyz[1]
+        node.varz = var_xyz[2]
+
+        node.x = curr_xyz[0]
+        node.y = curr_xyz[1]
+        node.z = curr_xyz[2]
+
+        node.vx = node.x - prevNode.x / dt
+        node.vy = node.y - prevNode.y / dt
+        node.vz = node.z - prevNode.z / dt
+
+    # Predict next state
+    (next_x, next_y, next_z) = stateExtrapolation((node.x, node.y, node.z), dt, (node.vx, node.vy, node.vz))
+    node.nx = next_x
+    node.ny = next_y
+    node.nz = next_z
+    # predict next covariance
+    doot = dt**2 * vvar
+    node.varx = node.varx + doot
+    node.vary = node.vary + doot
+    node.varz = node.varz + doot
+
+    return node
     
-    #termination criteria
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-        
-    # prepare object points
-    objp = np.zeros((25*25,3), np.float32)
-    objp[:,:2] = np.mgrid[0:25, 0:25].T.reshape(-1,2)
     
-    # arrays to store points and image points from all images
-    objPoints = [] # 3D points in real-world space
-    imgPoints = [] # 2D points in image plane
     
-    images = glob.glob('photos/*.png')
-    shape = None
-    for fname in images:
-        img = cv2.imread(fname)
-        #print(fname)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        shape = gray.shape[::-1]
-        
-        #find chessboard corners
-        ret, corners = cv2.findChessboardCorners(gray, (25,25), None)
-        
-        if ret == True:
-            #print("check")
-            
-            objPoints.append(objp)
-            
-            corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
-            imgPoints.append(corners2)
-    
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, shape, None, None)
-    
-    return 1, capture, mtx, dist
-
-def filterRGB(color_idx, frame, minThresh, maxDiff):
-    # Create a mask to filter out pixels where the target color is too dim
-    low_intensity = frame[:, :, color_idx] < minThresh
-    
-    # Create a mask to filter out pixels where other colors are too strong 
-    # (Checking all channels except the target 'color_idx')
-    too_different = np.zeros(frame.shape[:2], dtype=bool)
-    for i in range(3):
-        if i != color_idx:
-            # Mask is True if (OtherChannel - TargetChannel) > maxDiff
-            too_different |= (frame[:, :, i].astype(int) - frame[:, :, color_idx].astype(int)) > maxDiff
-
-    # Combine masks: any pixel matching either condition gets zeroed out
-    mask = low_intensity | too_different
-    
-    filtered = frame.copy()
-    filtered[mask] = [0, 0, 0]  # Black out the pixels
-    
-    # isolate target color
-    for i in range(3):
-        if i != color_idx:
-            filtered[:, :, i] = 0
-
-    # make monochrome (for contouring)
-    filtered = cv2.cvtColor(filtered, cv2.COLOR_BGR2GRAY)
-
-    # Apply Binary threshold at specified intensity (0-255) [https://docs.opencv.org/4.x/d7/d4d/tutorial_py_thresholding.html]
-    _, filtered = cv2.threshold(filtered, 1, 255, cv2.THRESH_BINARY)
-    
-    # invert black and white for contouring
-    #filtered = cv2.bitwise_not(filtered)
-            
-    return filtered
-
-def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
-    fx = frameDim[0] * focalLength
-    fy = frameDim[1] * focalLength
-
-    z = fx * trueSize / pxSize
-    x = (x - (frameDim[0]//2)) * z / fx
-    y = (y - (frameDim[1]//2)) * z / fy
-
-    return x, y, z
-
-# camera dimensions [m]
-# option 1:
-#lensWidth = 0.03
-#sensorWidth = 0.008
-#focalLength = lensWidth/sensorWidth    
-# option 2:   
-fieldOfView = 53 # in degrees, adjust for the cropped view after removing distortion
-focalLength = 0.5 / (math.tan(fieldOfView * math.pi / 360))
-
-# object real-world size [m]121
-targetObjSize = 0.08
-
-# minimum object size detectable in pixel area
-minObjSize = 10            
-
-# Camera source (file or index)
-videoIn = 0
-
-# global node arrays
-currFrameNodes = []
-prevFrameNodes = []
-
-# Camera initialization (calibrate distortion)
-success, capture, mtx, dist = initCam(videoIn)
-
-if not success:
-    quit(0)
-
-frame_W = int(capture.get(3))
-frame_H = int(capture.get(4))
-dispIndex = 0
-
-# file output
-raw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
-contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
-
-# object node counter (for unique node ids)
-nodeCount = 0
-
-# calculate matrix to undistort camera image
-ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
-
-# array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
-COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
-
-while True:
-    success, frame = capture.read()
-    if not success: # check if successful
-        break
-
-    undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
-    
-    cropped = undistorted[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
-    
-    filtered = filterRGB(2, cropped, 50, 20) 
-
-    contours, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    cont_frame = cropped.copy()
-    track = cropped.copy()
-
-    # loop through all objects in current frame
-    prevFrameNodes = currFrameNodes
-    currFrameNodes = []
-    for contour in contours:
-
-        # Filter out small contours (square pixel area)
-        if cv2.contourArea(contour) < minObjSize: 
-            continue
-
-        cont_frame = cv2.drawContours(cont_frame, contour,  -1, (0,255,0), 3)
-
-        # determine bounding rectangle dimensions
-        (x, y, w, h) = cv2.boundingRect(contour)
-
-        # determine centroid, size, & current time
-        c_x = x + w//2
-        c_y = y + h//2
-        unitLength = max(w, h)
-        currTime = time.time()
 
         
-        # estimate object position in cartesian coordinates
-        (x, y, z) = xyzTransform(c_x, c_y, unitLength, targetObjSize, focalLength, (frame_W, frame_H))
 
-        # save object position
-        nodeCount += 1
-        obj = node(nodeCount, (x, y, z), currTime)
-        # populate/update remaining node data
-        obj = kalman.kalmanFilter(obj, prevFrameNodes)
-        # save to array
-        currFrameNodes.append(obj)
-        print(obj)
-
-        # if object is not a new object, decrement
-        if nodeCount == obj.id:
-            nodeCount -= 1
-
-        # update tracking frame
-        colorIdx = obj.id % 7
-        color = COLORS[colorIdx]
-        cv2.rectangle(track, (x, y), (x + w, y + h), color, 2)
-
-
-
-    # initialize array of video streams (for 1-7 key functionality)
-    dispArr = [frame, undistorted, cropped, filtered, cont_frame, track]
-    disp = dispArr[dispIndex].copy()
-
-    # write to file
-    raw_mp4.write(frame)
-    contour_mp4.write(disp)
-
-    # Display video feed
-    cv2.imshow('Display', disp)
-
-    waitKey = cv2.waitKey(16) & 0xFF #delay in ms between checks = 16
-    if waitKey == ord('q'): # quit
-        break
-    elif waitKey== ord('1'): # view raw frame
-        dispIndex = 0
-    elif waitKey== ord('2'): # view filtered frame
-        dispIndex = 1
-    elif waitKey== ord('3'): # view undistorted frame
-        dispIndex = 2
-    elif waitKey== ord('4'): # view cropped frame
-        dispIndex = 3
-    elif waitKey== ord('5'): # view contours on frame
-        dispIndex = 4
-    elif waitKey== ord('6'): # view tracking frame
-        dispIndex = 5
-
-
-capture.release()
-raw_mp4.release()
-contour_mp4.release()
-cv2.destroyAllWindows()
