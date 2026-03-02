@@ -22,12 +22,20 @@
 import cv2
 import numpy as np
 import glob
+import subprocess
 import time
 import math
 import node
 import kalman
 
-def initCam(source): # connect video stream and calibrate lens distortion
+def initCam(source, res): # connect video stream and calibrate lens distortion
+    if res == 480:
+        subprocess.run(["./setCamResolution/480.sh"])
+    elif res == 720:
+        subprocess.run(["./setCamResolution/720.sh"])
+    elif res == 1080:
+        subprocess.run(["./setCamResolution/1080.sh"])
+    
     capture = cv2.VideoCapture(source)
 
     # test video stream connection
@@ -36,7 +44,15 @@ def initCam(source): # connect video stream and calibrate lens distortion
         print(f"unable to connect to video stream at source:{source}")
         return 0, capture, None, None
         
-    # lens calibration code
+    # set capture dimenions if not 480p
+    if res == 720:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    if res == 1080:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        
+    # LENS CALIBRATION
     
     #termination criteria
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -49,9 +65,13 @@ def initCam(source): # connect video stream and calibrate lens distortion
     objPoints = [] # 3D points in real-world space
     imgPoints = [] # 2D points in image plane
     
-    images = glob.glob('photos/*.png')
+    images = glob.glob(f"photos{res}/*.png")
     shape = None
+    totImgCount = 0
+    sucImgCount = 0
     for fname in images:
+        totImgCount += 1
+        
         img = cv2.imread(fname)
         #print(fname)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -63,6 +83,7 @@ def initCam(source): # connect video stream and calibrate lens distortion
         
         if ret == True:
             #print("check")
+            sucImgCount += 1
             
             objPoints.append(objp)
             
@@ -70,6 +91,9 @@ def initCam(source): # connect video stream and calibrate lens distortion
             imgPoints.append(corners2)
     
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, shape, None, None)
+    
+    print(f"{sucImgCount}/{totImgCount} used in calibration")
+    print(f"dist parmas: {dist}")
     
     return 1, capture, mtx, dist
 
@@ -110,10 +134,16 @@ def filterRGB(color_idx, frame, minThresh, maxDiff):
 def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
     fx = frameDim[0] * focalLength
     fy = frameDim[1] * focalLength
+    #fx = ncmtx[0, 0]
+    #fy = ncmtx[1, 1]
+    #cx = ncmtx[0, 2]
+    #cy = ncmtx[1, 2]
 
     z = fx * trueSize / pxSize
     x = (x - (frameDim[0]//2)) * z / fx
     y = (y - (frameDim[1]//2)) * z / fy
+    #x = (x - cx) * z / fx
+    #y = (y - cy) * z / fy
 
     return x, y, z
 
@@ -134,13 +164,14 @@ minObjSize = 10
 
 # Camera source (file or index)
 videoIn = 0
+resolution = 720 #480, 720, or 1080p
 
 # global node arrays
 currFrameNodes = []
 prevFrameNodes = []
 
 # Camera initialization (calibrate distortion)
-success, capture, mtx, dist = initCam(videoIn)
+success, capture, mtx, dist = initCam(videoIn, resolution)
 
 if not success:
     quit(0)
@@ -162,6 +193,7 @@ ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (fra
 # array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
 COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
 
+
 while True:
     success, frame = capture.read()
     if not success: # check if successful
@@ -171,12 +203,12 @@ while True:
     
     cropped = undistorted[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
     
-    filtered = filterRGB(2, cropped, 50, 20) 
+    filtered = filterRGB(2, undistorted, 50, 20) 
 
     contours, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    cont_frame = cropped.copy()
-    track = cropped.copy()
+    cont_frame = undistorted.copy()
+    track = undistorted.copy()
 
     # loop through all objects in current frame
     prevFrameNodes = currFrameNodes
@@ -190,11 +222,11 @@ while True:
         cont_frame = cv2.drawContours(cont_frame, contour,  -1, (0,255,0), 3)
 
         # determine bounding rectangle dimensions
-        (x, y, w, h) = cv2.boundingRect(contour)
+        (rx, ry, w, h) = cv2.boundingRect(contour)
 
         # determine centroid, size, & current time
-        c_x = x + w//2
-        c_y = y + h//2
+        c_x = rx + w//2
+        c_y = ry + h//2
         unitLength = max(w, h)
         currTime = time.time()
 
@@ -203,24 +235,22 @@ while True:
         (x, y, z) = xyzTransform(c_x, c_y, unitLength, targetObjSize, focalLength, (frame_W, frame_H))
 
         # save object position
-        nodeCount += 1
-        obj = node(nodeCount, (x, y, z), currTime)
+        obj = node.Node(nodeCount, (x, y, z), currTime)
+        initID = obj.id
         # populate/update remaining node data
         obj = kalman.kalmanFilter(obj, prevFrameNodes)
         # save to array
         currFrameNodes.append(obj)
-        print(obj)
+        print(f"x: {obj.z}, y: {obj.y}, z: {obj.z} \n")
 
-        # if object is not a new object, decrement
-        if nodeCount == obj.id:
-            nodeCount -= 1
-
+        # if object is a new object, increment
+        if initID == obj.id:
+            nodeCount += 1
+            
         # update tracking frame
         colorIdx = obj.id % 7
         color = COLORS[colorIdx]
-        cv2.rectangle(track, (x, y), (x + w, y + h), color, 2)
-
-
+        cv2.rectangle(track, (rx, ry), (rx + w, ry + h), color, 2)
 
     # initialize array of video streams (for 1-7 key functionality)
     dispArr = [frame, undistorted, cropped, filtered, cont_frame, track]
@@ -246,7 +276,7 @@ while True:
         dispIndex = 3
     elif waitKey== ord('5'): # view contours on frame
         dispIndex = 4
-    elif waitKey== ord('6'): # view tracking frame
+    elif waitKey== ord('6'): # view contours on frame
         dispIndex = 5
 
 

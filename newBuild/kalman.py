@@ -33,7 +33,7 @@ def stateExtrapolation(position, dt, velocity):
 
     return (next_x, next_y, next_z)
 
-def selectNode(prevFrameNodes, pos_xyz, t, range):
+def selectNode(prevFrameNodes, pos_xyz, t, area):
     x = pos_xyz [0]
     y = pos_xyz [1]
     z = pos_xyz [2]
@@ -46,7 +46,7 @@ def selectNode(prevFrameNodes, pos_xyz, t, range):
         yDiff = y - node.ny
         zDiff = z - node.nz
 
-        if xDiff < range and yDiff < range and zDiff < range:
+        if xDiff < area and yDiff < area and zDiff < area:
             if maxWeightIndex == -1: # if any node within range, update this value
                 maxWeightIndex = 0
             weight = np.sqrt( (xDiff)**2 + (yDiff)**2 + (zDiff)**2 )
@@ -75,6 +75,8 @@ def initNode(node):
     node.varx = 0.1
     node.vary = 0.1
     node.varz = 0.1
+    
+    return node
 
 
 
