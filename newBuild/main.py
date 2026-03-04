@@ -35,14 +35,8 @@ def initCam(source, res): # connect video stream and calibrate lens distortion
         subprocess.run(["./setCamResolution/720.sh"])
     elif res == 1080:
         subprocess.run(["./setCamResolution/1080.sh"])
-    
+        
     capture = cv2.VideoCapture(source)
-
-    # test video stream connection
-    success, _ = capture.read()
-    if not success:
-        print(f"unable to connect to video stream at source:{source}")
-        return 0, capture, None, None
         
     # set capture dimenions if not 480p
     if res == 720:
@@ -51,6 +45,12 @@ def initCam(source, res): # connect video stream and calibrate lens distortion
     if res == 1080:
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
+    # test video stream connection
+    success, _ = capture.read()
+    if not success:
+        print(f"unable to connect to video stream at source:{source}")
+        return 0, capture, None, None
         
     # LENS CALIBRATION
     
@@ -73,7 +73,7 @@ def initCam(source, res): # connect video stream and calibrate lens distortion
         totImgCount += 1
         
         img = cv2.imread(fname)
-        #print(fname)
+        
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
         shape = gray.shape[::-1]
@@ -82,20 +82,20 @@ def initCam(source, res): # connect video stream and calibrate lens distortion
         ret, corners = cv2.findChessboardCorners(gray, (25,25), None)
         
         if ret == True:
-            #print("check")
             sucImgCount += 1
             
             objPoints.append(objp)
             
             corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
             imgPoints.append(corners2)
+        else:
+            print(f"{fname}")
     
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, shape, None, None)
     
-    print(f"{sucImgCount}/{totImgCount} used in calibration")
-    print(f"dist parmas: {dist}")
+    h, w = gray.shape[:2]
     
-    return 1, capture, mtx, dist
+    return 1, capture, mtx, dist, w, h
 
 def filterRGB(color_idx, frame, minThresh, maxDiff):
     # Create a mask to filter out pixels where the target color is too dim
@@ -142,6 +142,7 @@ def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
     z = fx * trueSize / pxSize
     x = (x - (frameDim[0]//2)) * z / fx
     y = (y - (frameDim[1]//2)) * z / fy
+    
     #x = (x - cx) * z / fx
     #y = (y - cy) * z / fy
 
@@ -171,13 +172,12 @@ currFrameNodes = []
 prevFrameNodes = []
 
 # Camera initialization (calibrate distortion)
-success, capture, mtx, dist = initCam(videoIn, resolution)
+success, capture, mtx, dist, frame_W, frame_H = initCam(videoIn, resolution)
 
 if not success:
     quit(0)
 
-frame_W = int(capture.get(3))
-frame_H = int(capture.get(4))
+
 dispIndex = 0
 
 # file output
@@ -230,7 +230,7 @@ while True:
         unitLength = max(w, h)
         currTime = time.time()
 
-        
+
         # estimate object position in cartesian coordinates
         (x, y, z) = xyzTransform(c_x, c_y, unitLength, targetObjSize, focalLength, (frame_W, frame_H))
 
@@ -241,7 +241,7 @@ while True:
         obj = kalman.kalmanFilter(obj, prevFrameNodes)
         # save to array
         currFrameNodes.append(obj)
-        print(f"x: {obj.z}, y: {obj.y}, z: {obj.z} \n")
+        print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
 
         # if object is a new object, increment
         if initID == obj.id:

@@ -39,30 +39,30 @@ def selectNode(prevFrameNodes, pos_xyz, t, area):
     z = pos_xyz [2]
     # weight each node within search area by proximity to pos_xyz
     nodeWeights = []
-    maxWeightIndex = -1
+    minWeightIndex = -1
     currIndex = 0
     for node in prevFrameNodes:
         xDiff = x - node.nx
         yDiff = y - node.ny
         zDiff = z - node.nz
 
-        if xDiff < area and yDiff < area and zDiff < area:
-            if maxWeightIndex == -1: # if any node within range, update this value
-                maxWeightIndex = 0
+        if np.abs(xDiff) < area and np.abs(yDiff) < area and np.abs(zDiff) < area:
+            if minWeightIndex == -1: # if any node within range, update this value
+                minWeightIndex = 0
             weight = np.sqrt( (xDiff)**2 + (yDiff)**2 + (zDiff)**2 )
             nodeWeights.append(weight)
-            if nodeWeights[maxWeightIndex] < weight:
-                maxWeightIndex = currIndex
+            if weight < nodeWeights[minWeightIndex]:
+                minWeightIndex = currIndex
         else:
             nodeWeights.append(0)
 
         currIndex += 1
 
-    if maxWeightIndex == -1:
+    if minWeightIndex == -1:
         return None
     
     # select a node
-    return prevFrameNodes[maxWeightIndex]
+    return prevFrameNodes[minWeightIndex]
 
 def initNode(node):
     if node.x != None:
@@ -143,9 +143,11 @@ def kalmanFilter(node, prevFrameNodes):
         node.y = curr_xyz[1]
         node.z = curr_xyz[2]
 
-        node.vx = node.x - prevNode.x / dt
-        node.vy = node.y - prevNode.y / dt
-        node.vz = node.z - prevNode.z / dt
+        node.vx = (node.x - prevNode.x) / dt
+        node.vy = (node.y - prevNode.y) / dt
+        node.vz = (node.z - prevNode.z) / dt
+        
+        prevFrameNodes.remove(prevNode)
 
     # Predict next state
     (next_x, next_y, next_z) = stateExtrapolation((node.x, node.y, node.z), dt, (node.vx, node.vy, node.vz))
