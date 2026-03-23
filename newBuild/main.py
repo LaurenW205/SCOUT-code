@@ -130,6 +130,36 @@ def filterRGB(color_idx, frame, minThresh, maxDiff):
     #filtered = cv2.bitwise_not(filtered)
             
     return filtered
+    
+def filterYRB(frame, lumThresh, redThresh, maxDiff):
+    # Convert frame to YCrCb
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    
+    # Create a mask to filter out pixels where red is too dim
+    low_red = frame[:, :, 1] < redThresh 
+    
+    # Create a mask to filter out pixels where blue is too strong 
+    too_different = np.zeros(frame.shape[:2], dtype=bool)
+    
+    # Mask is True if (BlueChannel - RedChannel) > maxDiff
+    too_different |= (frame[:, :, 2].astype(int) - frame[:, :, 1].astype(int)) > maxDiff
+
+    # Combine masks: any pixel matching either condition gets zeroed out
+    mask = low_red | too_different
+    
+    filtered = frame.copy()
+    filtered[mask] = [0, 0, 0]  # Black out the pixels
+
+    # make monochrome (for contouring)
+    filtered = filtered[:, :, 0]
+
+    # Apply Binary threshold at specified intensity (0-255) [https://docs.opencv.org/4.x/d7/d4d/tutorial_py_thresholding.html]
+    _, filtered = cv2.threshold(filtered, lumThresh, 255, cv2.THRESH_BINARY)
+    
+    # invert black and white for contouring
+    #filtered = cv2.bitwise_not(filtered)
+            
+    return filtered
 
 def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
     fx = frameDim[0] * focalLength
@@ -161,7 +191,7 @@ focalLength = 0.5 / (math.tan(fieldOfView * math.pi / 360))
 targetObjSize = 0.08
 
 # minimum object size detectable in pixel area
-minObjSize = 10            
+minObjSize = 5            
 
 # Camera source (file or index)
 videoIn = 0
@@ -193,6 +223,7 @@ ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (fra
 # array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
 COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
 
+saveData = False
 
 while True:
     success, frame = capture.read()
@@ -201,14 +232,15 @@ while True:
 
     undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
     
-    cropped = undistorted[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
+    cropped = undistorted #undistorted[int(0.2*frame_H):int(0.8*frame_H),int(0.4*frame_W):int(0.6*frame_W)]
     
-    filtered = filterRGB(2, undistorted, 50, 20) 
+    #filtered = filterRGB(2, cropped, 35, 20) 
+    filtered = filterYRB(cropped, 90, 165, 20) 
 
     contours, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    cont_frame = undistorted.copy()
-    track = undistorted.copy()
+    cont_frame = cropped.copy()
+    track = cropped.copy()
 
     # loop through all objects in current frame
     prevFrameNodes = currFrameNodes
@@ -242,6 +274,9 @@ while True:
         # save to array
         currFrameNodes.append(obj)
         print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
+        if saveData == True:
+            print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n", file=open("data.txt", 'a'))
+            
 
         # if object is a new object, increment
         if initID == obj.id:
@@ -262,10 +297,14 @@ while True:
 
     # Display video feed
     cv2.imshow('Display', disp)
+    
+    saveData = False
 
     waitKey = cv2.waitKey(16) & 0xFF #delay in ms between checks = 16
     if waitKey == ord('q'): # quit
         break
+    elif waitKey== ord('c'): # save current node
+        saveData = True
     elif waitKey== ord('1'): # view raw frame
         dispIndex = 0
     elif waitKey== ord('2'): # view filtered frame

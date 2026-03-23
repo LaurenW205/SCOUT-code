@@ -33,36 +33,24 @@ def stateExtrapolation(position, dt, velocity):
 
     return (next_x, next_y, next_z)
 
-def selectNode(prevFrameNodes, pos_xyz, t, area):
-    x = pos_xyz [0]
-    y = pos_xyz [1]
-    z = pos_xyz [2]
-    # weight each node within search area by proximity to pos_xyz
-    nodeWeights = []
-    minWeightIndex = -1
-    currIndex = 0
+def selectNode(prevFrameNodes, measured_pos, searchArea):
+    best_node = None
+    min_dist = searchArea
+
     for node in prevFrameNodes:
-        xDiff = x - node.nx
-        yDiff = y - node.ny
-        zDiff = z - node.nz
+        # Use the PREDICTED position (nx, ny, nz) from the last frame
+        # rather than the filtered position (x, y, z)
+        dx = measured_pos[0] - node.nx
+        dy = measured_pos[1] - node.ny
+        dz = measured_pos[2] - node.nz
+        
+        dist = np.sqrt(dx**2 + dy**2 + dz**2)
 
-        if np.abs(xDiff) < area and np.abs(yDiff) < area and np.abs(zDiff) < area:
-            if minWeightIndex == -1: # if any node within range, update this value
-                minWeightIndex = 0
-            weight = np.sqrt( (xDiff)**2 + (yDiff)**2 + (zDiff)**2 )
-            nodeWeights.append(weight)
-            if weight < nodeWeights[minWeightIndex]:
-                minWeightIndex = currIndex
-        else:
-            nodeWeights.append(0)
-
-        currIndex += 1
-
-    if minWeightIndex == -1:
-        return None
-    
-    # select a node
-    return prevFrameNodes[minWeightIndex]
+        if dist < min_dist:
+            min_dist = dist
+            best_node = node
+            
+    return best_node
 
 def initNode(node):
     if node.x != None:
@@ -96,7 +84,7 @@ def kalmanFilter(node, prevFrameNodes):
     # init position estimate
     curr_xyz = (node.x, node.y, node.z)
     # init estimate uncertainty
-    pvar_xyz = (0.1, 0.1, 0.1) 
+    pvar_xyz = (0.1, 0.1, 1) 
     # init velocity estimate (no movement)
     node.vx = 0
     node.vy = 0
@@ -115,7 +103,7 @@ def kalmanFilter(node, prevFrameNodes):
     node.varz = var_xyz[2]
 
     # Weighted Selector
-    prevNode = selectNode(prevFrameNodes, curr_xyz, node.t, searchArea)
+    prevNode = selectNode(prevFrameNodes, curr_xyz, searchArea)
 
     # State Update, skip initial node
     if prevNode != None:
@@ -162,8 +150,3 @@ def kalmanFilter(node, prevFrameNodes):
 
     return node
     
-    
-    
-
-        
-
