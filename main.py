@@ -1,199 +1,327 @@
-## Class and function definitions in external files
+# Detect red pixels in frame DONE
+    # filter R > minThresh
+    # filter BG < maxDiff
+
+# estimate object size DONE
+    # contour filtered image
+    # transform contour area -> pixel length
+        # account for various orientations of LunaSat
+
+# add debug ui DONE
+
+# estimate object distance
+    # transform pixel coordinates to XYZ DONE
+    # correct for lens distortion
+
+# track objects across frames based on position
+    # basic kalman filter to estimate next position
+    # weighted selection matrix 
+
+# estimate object telemtery: pos, vel, acc
+
 import cv2
 import numpy as np
-from node import Node
-import velocityFunc as vf
+import glob
+import subprocess
 import time
 import math
+import node
+import kalman
 
-## Read initial parameters/code settings
+def initCam(source, res): # connect video stream and calibrate lens distortion
+    if res == 480:
+        subprocess.run(["./setCamResolution/480.sh"])
+    elif res == 720:
+        subprocess.run(["./setCamResolution/720.sh"])
+    elif res == 1080:
+        subprocess.run(["./setCamResolution/1080.sh"])
+        
+    capture = cv2.VideoCapture(source)
+        
+    # set capture dimenions if not 480p
+    if res == 720:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    if res == 1080:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
-# video source (camera index or file path, 0 = default camera)
+    # test video stream connection
+    success, _ = capture.read()
+    if not success:
+        print(f"unable to connect to video stream at source:{source}")
+        return 0, capture, None, None
+        
+    # LENS CALIBRATION
+    
+    #termination criteria
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        
+    # prepare object points
+    objp = np.zeros((25*25,3), np.float32)
+    objp[:,:2] = np.mgrid[0:25, 0:25].T.reshape(-1,2)
+    
+    # arrays to store points and image points from all images
+    objPoints = [] # 3D points in real-world space
+    imgPoints = [] # 2D points in image plane
+    
+    images = glob.glob(f"photos{res}/*.png")
+    shape = None
+    totImgCount = 0
+    sucImgCount = 0
+    for fname in images:
+        totImgCount += 1
+        
+        img = cv2.imread(fname)
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        shape = gray.shape[::-1]
+        
+        #find chessboard corners
+        ret, corners = cv2.findChessboardCorners(gray, (25,25), None)
+        
+        if ret == True:
+            sucImgCount += 1
+            
+            objPoints.append(objp)
+            
+            corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
+            imgPoints.append(corners2)
+        else:
+            print(f"{fname}")
+    
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, shape, None, None)
+    
+    h, w = gray.shape[:2]
+    
+    return 1, capture, mtx, dist, w, h
+
+def filterRGB(color_idx, frame, minThresh, maxDiff):
+    # Create a mask to filter out pixels where the target color is too dim
+    low_intensity = frame[:, :, color_idx] < minThresh
+    
+    # Create a mask to filter out pixels where other colors are too strong 
+    # (Checking all channels except the target 'color_idx')
+    too_different = np.zeros(frame.shape[:2], dtype=bool)
+    for i in range(3):
+        if i != color_idx:
+            # Mask is True if (OtherChannel - TargetChannel) > maxDiff
+            too_different |= (frame[:, :, i].astype(int) - frame[:, :, color_idx].astype(int)) > maxDiff
+
+    # Combine masks: any pixel matching either condition gets zeroed out
+    mask = low_intensity | too_different
+    
+    filtered = frame.copy()
+    filtered[mask] = [0, 0, 0]  # Black out the pixels
+    
+    # isolate target color
+    for i in range(3):
+        if i != color_idx:
+            filtered[:, :, i] = 0
+
+    # make monochrome (for contouring)
+    filtered = cv2.cvtColor(filtered, cv2.COLOR_BGR2GRAY)
+
+    # Apply Binary threshold at specified intensity (0-255) [https://docs.opencv.org/4.x/d7/d4d/tutorial_py_thresholding.html]
+    _, filtered = cv2.threshold(filtered, 1, 255, cv2.THRESH_BINARY)
+    
+    # invert black and white for contouring
+    #filtered = cv2.bitwise_not(filtered)
+            
+    return filtered
+    
+def filterYRB(frame, lumThresh, redThresh, maxDiff):
+    # Convert frame to YCrCb
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    
+    # Create a mask to filter out pixels where red is too dim
+    low_red = frame[:, :, 1] < redThresh 
+    
+    # Create a mask to filter out pixels where blue is too strong 
+    too_different = np.zeros(frame.shape[:2], dtype=bool)
+    
+    # Mask is True if (BlueChannel - RedChannel) > maxDiff
+    too_different |= (frame[:, :, 2].astype(int) - frame[:, :, 1].astype(int)) > maxDiff
+
+    # Combine masks: any pixel matching either condition gets zeroed out
+    mask = low_red | too_different
+    
+    filtered = frame.copy()
+    filtered[mask] = [0, 0, 0]  # Black out the pixels
+
+    # make monochrome (for contouring)
+    filtered = filtered[:, :, 0]
+
+    # Apply Binary threshold at specified intensity (0-255) [https://docs.opencv.org/4.x/d7/d4d/tutorial_py_thresholding.html]
+    _, filtered = cv2.threshold(filtered, lumThresh, 255, cv2.THRESH_BINARY)
+    
+    # invert black and white for contouring
+    #filtered = cv2.bitwise_not(filtered)
+            
+    return filtered
+
+def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
+    fx = frameDim[0] * focalLength
+    fy = frameDim[1] * focalLength
+    #fx = ncmtx[0, 0]
+    #fy = ncmtx[1, 1]
+    #cx = ncmtx[0, 2]
+    #cy = ncmtx[1, 2]
+
+    z = fx * trueSize / pxSize
+    x = (x - (frameDim[0]//2)) * z / fx
+    y = (y - (frameDim[1]//2)) * z / fy
+    
+    #x = (x - cx) * z / fx
+    #y = (y - cy) * z / fy
+
+    return x, y, z
+
+# camera dimensions [m]
+fieldOfView = 53 # in degrees, adjust for the cropped view after removing distortion
+focalLength = 0.5 / (math.tan(fieldOfView * math.pi / 360))
+
+# object real-world size [m]121
+targetObjSize = 0.08
+
+# minimum object size detectable in pixel area
+minObjSize = 5            
+
+# Camera source (file or index)
 videoIn = 0
+resolution = 720 #480, 720, or 1080p
 
-# blur amount (pixel radius)
-blurSize = 5
+# global node arrays
+currFrameNodes = []
+prevFrameNodes = []
 
-# binary threshold (0-255 pixel intensity)
-binThresh = 25
+# Camera initialization (calibrate distortion)
+success, capture, mtx, dist, frame_W, frame_H = initCam(videoIn, resolution)
 
-# dilation amount (number of dilation iterations)
-dilIter = 2
-
-# min contour area (square pixels)
-minArea = 500
-
-## Establish camera connection and initialize out files
-capture = cv2.VideoCapture(videoIn)
-success, _ = capture.read()
-if not success: # check if video source successfully capturing
-    print("No Video Source found. \n")
+if not success:
     quit(0)
 
-# Create background subtractor [https://docs.opencv.org/3.4/d7/d7b/classcv_1_1BackgroundSubtractorMOG2.html]
-fgbg = cv2.createBackgroundSubtractorMOG2()
 
-# Define frame dimensions and output file
-frame_W = int(capture.get(3))
-frame_H = int(capture.get(4))
-outraw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
-outproc_mp4 = cv2.VideoWriter('processedCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
+dispIndex = 0
 
-# Initialize Tracing Image as a black rgb frame
-traceImg = np.zeros((frame_H, frame_W, 3), dtype=np.uint8)
+# file output
+raw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
+contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
+dataFile = open("data.txt", 'w')
+dataFile.write(f"id, x, y, z, t \n")
 
-# Initialize Data Files (comma separated list)
-rawData = open('rawDataOut.txt', 'w')
-rawData.write("x, y, z,\n")
-velData = open('velocityDataOut.txt', 'w')
-velData.write("vx, vy, v, theta,\n")
+# object node counter (for unique node ids)
+nodeCount = 0
 
-recording = False # not recording by default
-info = False # info display off by default
-allNodes = [] # empty array to store all Nodes (data not saved)
-recNodes = [] # empty array to store recorded Nodes
-dispIndex = -1 # tracking frame by default
+# calculate matrix to undistort camera image
+ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
 
-## Enter loop to display camera feed
+# array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
+COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
+
+saveData = False
+
 while True:
-    # Grab frame from video capture
     success, frame = capture.read()
     if not success: # check if successful
         break
-    # add different keys to change window view (optional)
 
-    track = frame.copy()
+    undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
+    
+    cropped = undistorted #undistorted[int(0.2*frame_H):int(0.8*frame_H),int(0.4*frame_W):int(0.6*frame_W)]
+    
+    #filtered = filterRGB(2, cropped, 35, 20) 
+    filtered = filterYRB(cropped, 70, 165, 20) 
 
-    ## Apply image filters to find object
-    # Blur to decrease noise [https://docs.opencv.org/4.x/d4/d13/tutorial_py_filtering.html]
-    blur = cv2.medianBlur(frame, blurSize)
+    contours, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Apply background subtractor [see link at fgbg definition]
-    fgmask = fgbg.apply(blur)
+    cont_frame = cropped.copy()
+    track = cropped.copy()
 
-    # Apply Binary threshold at specified intensity (0-255) [https://docs.opencv.org/4.x/d7/d4d/tutorial_py_thresholding.html]
-    _, thresh = cv2.threshold(fgmask, binThresh, 255, cv2.THRESH_BINARY)
-
-    # Dilation (to fill gaps - optional) [https://docs.opencv.org/3.4/db/df6/tutorial_erosion_dilatation.html]
-    dilated = cv2.dilate(thresh, None, iterations=dilIter)
-
-    # Find contours [https://docs.opencv.org/3.4/d4/d73/tutorial_py_contours_begin.html]
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cont_frame = cv2.drawContours(frame.copy(), contours,  -1,(0,255,0), 3)
-
-    # Loop through possible objects and draw rectangles
+    # loop through all objects in current frame
+    prevFrameNodes = currFrameNodes
+    currFrameNodes = []
     for contour in contours:
-        if cv2.contourArea(contour) < minArea: # Filter small contours (square pixel area)
+
+        # Filter out small contours (square pixel area)
+        if cv2.contourArea(contour) < minObjSize: 
             continue
 
+        cont_frame = cv2.drawContours(cont_frame, contour,  -1, (0,255,0), 3)
+
         # determine bounding rectangle dimensions
-        (x, y, w, h) = cv2.boundingRect(contour)
+        (rx, ry, w, h) = cv2.boundingRect(contour)
 
-        # draw rectangle
-        cv2.rectangle(track, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-        # determine centroid & current time
-        center_x = x + w//2
-        center_y = y + h//2
-        curr_time = time.time()
-
-        allNodes.append(Node(center_x, center_y, curr_time))
-
-        # check if recording to save specific frame data
-        if recording == True:
-
-            # for traced path image, mark centroid dot
-            cv2.circle(traceImg, (center_x, center_y), 1, (0, 0, 255), -1)
-
-            # velocity calculation data 
-            recNodes.append(Node(center_x, center_y, curr_time))
-
-            # save raw data to file
-            rawData.write(f"{center_x}, {center_y}, {curr_time},\n")
+        # determine centroid, size, & current time
+        c_x = rx + w//2
+        c_y = ry + h//2
+        unitLength = max(w, h)
+        currTime = time.time()
 
 
-    ## Check if recording for file output
-    if recording == True:
+        # estimate object position in cartesian coordinates
+        (x, y, z) = xyzTransform(c_x, c_y, unitLength, targetObjSize, focalLength, (frame_W, frame_H))
 
-        # save tracked object data to video file
-        outraw_mp4.write(frame)
-        outproc_mp4.write(track)
+        # save object position
+        obj = node.Node(nodeCount, (x, y, z), currTime)
+        initID = obj.id
+        # populate/update remaining node data
+        obj = kalman.kalmanFilter(obj, prevFrameNodes)
+        # save to array
+        currFrameNodes.append(obj)
+        #print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
+        if saveData == True:
+            dataFile.write(f"{obj.id}, {obj.x}, {obj.y}, {obj.z}, {currTime} \n")
+            print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
+            
+
+        # if object is a new object, increment
+        if initID == obj.id:
+            nodeCount += 1
+            
+        # update tracking frame
+        colorIdx = obj.id % 7
+        color = COLORS[colorIdx]
+        cv2.rectangle(track, (rx, ry), (rx + w, ry + h), color, 2)
 
     # initialize array of video streams (for 1-7 key functionality)
-    dispArr = [frame, blur, fgmask, thresh, dilated, cont_frame, track]
+    dispArr = [frame, undistorted, cropped, filtered, cont_frame, track]
     disp = dispArr[dispIndex].copy()
-    
-    if recording == True: 
-        # display recording icon in feed
-        cv2.circle(disp, (50, 50), 15, (0, 0, 255), -1)
-    
-    if info == True:
-        cv2.putText(disp, "I", (frame_W-70, 70),cv2.FONT_HERSHEY_COMPLEX,2,(240,180,50),2)
-        if len(allNodes) > 2: # check if at startup (empty array)
 
-            # calculate values at most recent node data
-            vxi, vyi = vf.xyVelocity(allNodes[-2:])
-            vi, thetai = vf.vthetaVelocity(allNodes[-2:])
+    # write to file
+    raw_mp4.write(frame)
+    contour_mp4.write(disp)
 
-            # display info on screen
-            cv2.putText(disp, f"Vel x : {math.floor(vxi[0])}", (20,frame_H-50),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
-            cv2.putText(disp, f"Vel y : {math.floor(vyi[0])}", (160,frame_H-50),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
-            cv2.putText(disp, f"Tot V : {math.floor(vi[0])}", (20,frame_H-20),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
-            cv2.putText(disp, f"Theta : {math.floor(thetai[0])}", (160,frame_H-20),cv2.FONT_HERSHEY_PLAIN,1.2,(240,180,50),2)
-
-
-    ## Display video feed
+    # Display video feed
     cv2.imshow('Display', disp)
 
-    ## User key input processing
-    waitKey = cv2.waitKey(10) & 0xFF #delay in ms between checks
+    waitKey = cv2.waitKey(16) & 0xFF #delay in ms between checks = 16
     if waitKey == ord('q'): # quit
         break
-    elif waitKey == ord('r'): # toggle recording
-        recording = not recording
-    elif waitKey == ord('i'): # toggle info display
-        info = not info
+    elif waitKey== ord('s'): # save current node
+        saveData = not saveData
+        if saveData:
+            print("recording...")
+        else:
+            print("recording stopped.")
     elif waitKey== ord('1'): # view raw frame
         dispIndex = 0
-    elif waitKey== ord('2'): # view blur
+    elif waitKey== ord('2'): # view filtered frame
         dispIndex = 1
-    elif waitKey== ord('3'): # view foreground mask
+    elif waitKey== ord('3'): # view undistorted frame
         dispIndex = 2
-    elif waitKey== ord('4'): # view threshold frame
+    elif waitKey== ord('4'): # view cropped frame
         dispIndex = 3
-    elif waitKey== ord('5'): # view dilated frame
+    elif waitKey== ord('5'): # view contours on frame
         dispIndex = 4
-    elif waitKey== ord('6'): # view contoured frame
+    elif waitKey== ord('6'): # view contours on frame
         dispIndex = 5
-    elif waitKey== ord('7'): # view tracked frame
-        dispIndex = 6
 
-# release media resources at termination of video monitor
+
 capture.release()
-outraw_mp4.release()
-outproc_mp4.release()
+raw_mp4.release()
+contour_mp4.release()
+dataFile.close()
 cv2.destroyAllWindows()
 
-
-## Output 
-# image connecting position dots
-cv2.imshow("Traced Path", traceImg)
-while cv2.waitKey(1) != ord('q'):
-    pass
-cv2.imwrite('TracedImg.png', traceImg)
-
-cv2.destroyAllWindows()
-# vx, vy velocities
-vx, vy = vf.xyVelocity(recNodes)
-# V/theta velocities
-v, theta = vf.vthetaVelocity(recNodes)
-# print velocity data to file and terminal
-for i in range(len(vx)):
-    velData.write(f"{vx[i]}, {vy[i]}, {v[i]}, {theta[i]},\n")
-    print(f"X Velocity: {vx[i]}, Y Velocity: {vy[i]}, Total Velocity: {v[i]}, Heading Angle (deg): {theta[i]}")
-
-# release data files
-rawData.close()
-velData.close()
-
-# TBD
