@@ -21,6 +21,9 @@
 
 import cv2
 import numpy as np
+from picamera2 import Picamera2
+from picamera2.encoders import H264Encoder
+from picamera2.outputs import FfmpegOutput
 import glob
 import subprocess
 import time
@@ -28,30 +31,42 @@ import math
 import node
 import kalman
 
-def initCam(source, res): # connect video stream and calibrate lens distortion
+def initCam(picam, res): # connect video stream 
+    h, w = None, None
     if res == 480:
-        subprocess.run(["./setCamResolution/480.sh"])
+        #subprocess.run(["./setCamResolution/480.sh"])
+        config = picam.create_video_configuration({"format" : "RGB888", "size": (640, 480)})
+        picam.configure(config)
+        h = 640
+        w = 480
     elif res == 720:
-        subprocess.run(["./setCamResolution/720.sh"])
+        #subprocess.run(["./setCamResolution/720.sh"])
+        config = picam.create_video_configuration({"format" : "RGB888", "size": (1280, 720)})
+        picam.configure(config)
+        h = 1280
+        w = 720
     elif res == 1080:
-        subprocess.run(["./setCamResolution/1080.sh"])
+        #subprocess.run(["./setCamResolution/1080.sh"])
+        config = picam.create_video_configuration({"format" : "RGB888", "size": (1920, 1080)})
+        picam.configure(config)
+        h = 1920
+        w = 1080
         
-    capture = cv2.VideoCapture(source)
-        
-    # set capture dimenions if not 480p
-    if res == 720:
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    if res == 1080:
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    picam.start()
 
     # test video stream connection
-    success, _ = capture.read()
-    if not success:
+    frame = picam.capture_array()
+    if frame is None:
         print(f"unable to connect to video stream at source:{source}")
-        return 0, capture, None, None
+        return 0, picam, w, h, None, None
         
+        if needCalibrate is True:
+            mtx, dist = calibrate(res)
+            return 1, picam, w, h, mtx, dist
+    
+    return 1, picam, w, h, None, None
+
+def calibrate(res): # calibrate lens distortion
     # LENS CALIBRATION
     
     #termination criteria
@@ -89,14 +104,12 @@ def initCam(source, res): # connect video stream and calibrate lens distortion
             corners2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
             imgPoints.append(corners2)
         else:
-            print(f"{fname}")
+            print(f"{fname}") # prints filenames of unused images
     
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, shape, None, None)
+    return mtx, dist
     
-    h, w = gray.shape[:2]
     
-    return 1, capture, mtx, dist, w, h
-
 def filterRGB(color_idx, frame, minThresh, maxDiff):
     # Create a mask to filter out pixels where the target color is too dim
     low_intensity = frame[:, :, color_idx] < minThresh
@@ -179,8 +192,11 @@ def xyzTransform(x, y, pxSize, trueSize, focalLength, frameDim):
     return x, y, z
 
 # camera dimensions [m]
-fieldOfView = 53 # in degrees, adjust for the cropped view after removing distortion
+fieldOfView = 75 #53 # in degrees, adjust for the cropped view after removing distortion
 focalLength = 0.5 / (math.tan(fieldOfView * math.pi / 360))
+
+# need undistort?
+needCalibrate = False
 
 # object real-world size [m]121
 targetObjSize = 0.08
@@ -188,8 +204,8 @@ targetObjSize = 0.08
 # minimum object size detectable in pixel area
 minObjSize = 5            
 
-# Camera source (file or index)
-videoIn = 0
+# Establish connection to video source
+picam = Picamera2()
 resolution = 720 #480, 720, or 1080p
 
 # global node arrays
@@ -197,7 +213,7 @@ currFrameNodes = []
 prevFrameNodes = []
 
 # Camera initialization (calibrate distortion)
-success, capture, mtx, dist, frame_W, frame_H = initCam(videoIn, resolution)
+success, picam, frame_W, frame_H, mtx, dist = initCam(picam, resolution)
 
 if not success:
     quit(0)
@@ -206,16 +222,20 @@ if not success:
 dispIndex = 0
 
 # file output
-raw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
-contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
+encoder = H264Encoder(10000000)
+output = FfmpegOutput('raw.mp4')
+picam.start_recording(encoder, output)
+#raw_mp4 = cv2.VideoWriter('rawCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
+#contour_mp4 = cv2.VideoWriter('contourCap.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (frame_W,frame_H))
 dataFile = open("data.txt", 'w')
-dataFile.write(f"id, x, y, z, t \n")
+dataFile.write(f"id, x, y, z, t, mx, my, mz \n")
 
 # object node counter (for unique node ids)
 nodeCount = 0
 
 # calculate matrix to undistort camera image
-ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
+if needCalibrate is True:
+    ncmtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (frame_W,frame_H), 0, (frame_W,frame_H))
 
 # array of colors for tracking frame boxes  red, orange, yellow, green, blue, purple, pink
 COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191,191,255)]
@@ -223,13 +243,17 @@ COLORS = [(0,0,255),(0,127,255),(0,255,255),(0,255,0),(255,0,0),(127,0,127),(191
 saveData = False
 
 while True:
-    success, frame = capture.read()
-    if not success: # check if successful
+    frame = picam.capture_array()
+    if frame is None: # check if successful
         break
-
-    undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
+        
+    # default w/out calibration
+    cropped = frame
+    undistorted = cropped
     
-    cropped = undistorted #undistorted[int(0.2*frame_H):int(0.8*frame_H),int(0.4*frame_W):int(0.6*frame_W)]
+    if needCalibrate is True:
+        undistorted = cv2.undistort(frame, mtx, dist, None, ncmtx)
+        cropped = undistorted #undistorted[int(0.2*frame_H):int(0.8*frame_H),int(0.4*frame_W):int(0.6*frame_W)]
     
     #filtered = filterRGB(2, cropped, 35, 20) 
     filtered = filterYRB(cropped, 70, 165, 20) 
@@ -272,7 +296,7 @@ while True:
         currFrameNodes.append(obj)
         #print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
         if saveData == True:
-            dataFile.write(f"{obj.id}, {obj.x}, {obj.y}, {obj.z}, {currTime} \n")
+            dataFile.write(f"{obj.id}, {obj.x}, {obj.y}, {obj.z}, {currTime}, {obj.mx}, {obj.my}, {obj.mz} \n")
             print(f"id: {obj.id}, x: {obj.x}, y: {obj.y}, z: {obj.z} \n")
             
 
@@ -289,9 +313,9 @@ while True:
     dispArr = [frame, undistorted, cropped, filtered, cont_frame, track]
     disp = dispArr[dispIndex].copy()
 
-    # write to file
-    raw_mp4.write(frame)
-    contour_mp4.write(disp)
+    # write to file (not needed for picam)
+    #raw_mp4.write(frame)
+    #contour_mp4.write(disp)
 
     # Display video feed
     cv2.imshow('Display', disp)
@@ -319,9 +343,10 @@ while True:
         dispIndex = 5
 
 
-capture.release()
-raw_mp4.release()
-contour_mp4.release()
+picam.stop_recording()
+#raw_mp4.release()
+#contour_mp4.release()
 dataFile.close()
+picam.stop()
 cv2.destroyAllWindows()
 
