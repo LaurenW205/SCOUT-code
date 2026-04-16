@@ -1,0 +1,15 @@
+[Unit]
+Description=SCOUT RockSat mission, run on reboot service
+After=network.target
+
+[Service]
+ExecStart=/bin/bash /home/pi/Desktop/mission/missionDriver.sh
+WorkingDirectory=/home/pi/Desktop/mission
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
+```
