@@ -4,39 +4,25 @@
 
 
 ## Boot Up & Initialization
-# this is for when the code is run manually for debug
-if [[ $1 -gt 0 ]]; then 
-    # skip unnecessary stuff, run main loop number of times as in $1 ------------------------------
-else
-    # wait 3 seconds for to allow for Ctrl+C interrupt
-    sleep 3
-fi
 
-LOGFILE="mission.log"
-MAINFILE="run/main.exe"
+BASEDIR="/home/scout/Desktop/mission"
 
 # create .log file
-echo -n "" > $LOGFILE
-echo "Log file created at $(date)" >> $LOGFILE
+LOGFILE="mission.log"
+echo -n "" > "${BASEDIR}/${LOGFILE}"
+echo "Log file created at $(date)" >> "${BASEDIR}/${LOGFILE}"
 
 # check memory allocation
 FREEMEM=$(df -m / | awk 'NR==2 {print $4}')
-echo "Remaining Free Memory: $FREEMEM MB" >> $LOGFILE
+echo "Remaining Free Memory: $FREEMEM MB" >> "${BASEDIR}/${LOGFILE}"
 
-# idle and wait for interrupt?
-trap break INT
-echo "Idling until interrupt..." >> $LOGFILE
-
-while true; do
-    sleep 1
-done
-
-echo "Interrupt received | $(date)" >> $LOGFILE
+# check current number of files to determine file index later on
+FILECOUNT=$(find "${BASEDIR}/data" -maxdepth 1 -type f -name '*.txt' 2>"${BASEDIR}/${LOGFILE}" | wc -l)
 
 ## Main Loop
 trap 'exit 0' INT
 
-LOOPCOUNT=1
+LOOPCOUNT=0
 while :; do
 
     # For debug loop termination
@@ -44,34 +30,43 @@ while :; do
         break
     fi
 
-    echo "Loop: $LOOPCOUNT" >> $LOGFILE
+    echo "Loop: $LOOPCOUNT" >> "${BASEDIR}/${LOGFILE}"
 
 # 1. Check available memory storage
+
     FREEMEM=$(df -m / | awk 'NR==2 {print $4}')
-    echo "Remaining Free Memory: $FREEMEM MB" >> $LOGFILE
+    echo "Remaining Free Memory: $FREEMEM MB" >> "${BASEDIR}/${LOGFILE}"
 
     # if remaining storage is < 100MB
     if [[ $FREEMEM -lt 100 ]]; then
+
         # 2 oldest data files
-        read -r FILE1 FILE2 < <(ls -tr1 data/ | head -n 2)
+        read -r FILE1 FILE2 < <(ls -tr1 --file-type "${BASEDIR}/data/" | grep -v '/$' | head -n 2)
+
         # delete oldest files (-f to force)
-        echo "Removing $FILE1, $FILE2" >> $LOGFILE
-        rm "data/$FILE1" "data/$FILE2" -f
+        echo "Removing $FILE1, $FILE2" >> "${BASEDIR}/${LOGFILE}"
+        rm -f "${BASEDIR}/data/${FILE1}" "${BASEDIR}/data/${FILE2}" 
     fi
 
-# 2. Call run/ files
+# 2. Call/Run files
 
-    # run main executable in /run --- terminate after 1 min 10 sec
-    timeout -k 10s 1m ./$MAINFILE >> $LOGFILE
-        # if error, recompile from /src?
+    # compile and run code from /src --- terminate after 1 min 10 sec
+
+    #timeout -k 10s 1m ./"${BASEDIR}${MAINFILE}" >> "${BASEDIR}${LOGFILE}" 2>&1 # old implementation for .exe
+    timeout -k 10s 1m python "${BASEDIR}/src/main.py" >> "${BASEDIR}/${LOGFILE}" 2>&1
+
+        # if error, must recompile from /src
 
 
 # 3. Organize Data Output
 
+    # define data file naming index
+    FILEIDX=$((LOOPCOUNT + FILECOUNT + 1))
+
     # move and rename data files
-    echo "Catalogging data files" >> $LOGFILE
-    mv data.txt data/data$LOOPCOUNT.txt
-    mv raw.mp4 data/raw$LOOPCOUNT.mp4
+    echo "Cataloging data files" >> ${BASEDIR}/${LOGFILE}
+    mv "${BASEDIR}/data.txt" "${BASEDIR}/data/data${FILEIDX}.txt"
+    mv "${BASEDIR}/raw.mp4" "${BASEDIR}/data/raw${FILEIDX}.mp4"
 
     LOOPCOUNT=$((LOOPCOUNT + 1))
 
