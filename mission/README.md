@@ -12,5 +12,7 @@ If you would like to run this script manually, use the command `./missionDriver.
 Remember to send Ctrl+C interrupts to start and exit video recording
 
 
-##### TEMP:
-put misison.service into /etc/systemd/system/
+# How to Update Code
+To make changes to the code, edit the files in the src/ directory.
+
+The code will recompile in the driver script so follow the 'How to run' instructions above.
