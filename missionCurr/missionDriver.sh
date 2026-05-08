@@ -19,14 +19,26 @@ sudo echo in > sys/class/gpio/gpio536/direction
 echo "GPIO intialized" >> "${BASEDIR}/${LOGFILE}"
 
 # check for residual data file
-OLDFILE=$(ls -1 -- *.h264 2>"${BASEDIR}/${LOGFILE}" | head -n1 )
+RESFILE=$(ls -1 -- *.h264 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
+OLDTIME=$(date)
+if [[ -n $RESFILE ]]; then
+    # extract previous timestamp
+    OLDFILE=$(ls -1t -- "data/*raw*.h264 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
 
-if [[ -n $OLDFILE ]]; then
+    # if none found, set to empty
+    if [[ -z "$OLDFILE" ]]; then
+        echo "No old files found." >> "${BASEDIR}/${LOGFILE}"
+    else
+        # trim the suffix "raw*.h264" from the end of the filename
+        OLDTIME="${OLDFILE%raw*.h264}"
+        # only want the basename (no directory)
+        OLDTIME="$(basename -- "$OLDTIME")"
+    fi
     
-    mv -- "$OLDFILE" "$dest"
-    echo "Moved: $OLDFILE -> data/" >> "${BASEDIR}/${LOGFILE}"
+    mv -- "$RESFILE" "data/$OLDTIME$RESFILE"
+    echo "Moved: $RESFILE -> data/" >> "${BASEDIR}/${LOGFILE}"
 else
-    echo "No old .h264 files found." >> "${BASEDIR}/${LOGFILE}"
+    echo "No residual .h264 files found." >> "${BASEDIR}/${LOGFILE}"
 fi
 
 MAINFILE="src/main.py"
