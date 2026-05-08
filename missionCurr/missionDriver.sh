@@ -18,6 +18,16 @@ sleep 1
 sudo echo in > sys/class/gpio/gpio536/direction
 echo "GPIO intialized" >> "${BASEDIR}/${LOGFILE}"
 
+# check for residual data file
+OLDFILE=$(ls -1 -- *.h264 2>"${BASEDIR}/${LOGFILE}" | head -n1 )
+
+if [[ -n $OLDFILE ]]; then
+    
+    mv -- "$OLDFILE" "$dest"
+    echo "Moved: $OLDFILE -> data/" >> "${BASEDIR}/${LOGFILE}"
+else
+    echo "No old .h264 files found." >> "${BASEDIR}/${LOGFILE}"
+fi
 
 MAINFILE="src/main.py"
 VFILETYPE="h264"
