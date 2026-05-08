@@ -16,14 +16,14 @@ echo "Log file created at $(date)" >> "${BASEDIR}/${LOGFILE}"
 sudo echo 536 > sys/class/gpio/export
 sleep 1
 sudo echo in > sys/class/gpio/gpio536/direction
-echo "GPIO intialized" >> "${BASEDIR}/${LOGFILE}"
+echo "GPIO initialized" >> "${BASEDIR}/${LOGFILE}"
 
 # check for residual data file
-RESFILE=$(ls -1 -- *.h264 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
+RESFILE=$(ls -1 "${BASEDIR}" -- *.h264 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
 OLDTIME=$(date)
 if [[ -n $RESFILE ]]; then
     # extract previous timestamp
-    OLDFILE=$(ls -1t -- "data/*raw*.h264 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
+    OLDFILE=$(ls -1t -- "${BASEDIR}/data/*raw*.h264" 2>"${BASEDIR}/${LOGFILE}" | head -n 1 )
 
     # if none found, set to empty
     if [[ -z "$OLDFILE" ]]; then
@@ -35,7 +35,7 @@ if [[ -n $RESFILE ]]; then
         OLDTIME="$(basename -- "$OLDTIME")"
     fi
     
-    mv -- "$RESFILE" "data/$OLDTIME$RESFILE"
+    mv -- "$RESFILE" "${BASEDIR}/data/$OLDTIME$RESFILE"
     echo "Moved: $RESFILE -> data/" >> "${BASEDIR}/${LOGFILE}"
 else
     echo "No residual .h264 files found." >> "${BASEDIR}/${LOGFILE}"
@@ -45,7 +45,7 @@ MAINFILE="src/main.py"
 VFILETYPE="h264"
 
 # read true timestamp from file
-TIMESTAMP=$(head -n 1 "timestamp.txt")
+TIMESTAMP=$(head -n 1 "${BASEDIR}/timestamp.txt")
 echo "Parent timestamp: ${TIMESTAMP}" >> "${BASEDIR}/${LOGFILE}"
 
 # check memory allocation
