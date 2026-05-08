@@ -23,7 +23,8 @@ MAINFILE="src/main.py"
 VFILETYPE="h264"
 
 # read true timestamp from file
-TIMESTAMP=$(cat "timestamp.txt")
+TIMESTAMP=$(head -n 1 "timestamp.txt")
+echo "Parent timestamp: ${TIMESTAMP}" >> "${BASEDIR}/${LOGFILE}"
 
 # check memory allocation
 FREEMEM=$(df -m / | awk 'NR==2 {print $4}')
@@ -74,7 +75,7 @@ while :; do
 
     # run program --- terminate after 1 min 16 sec
 
-    timeout -k 50s 3m rpicam-vid -n -t 210000 -o "${BASEDIR}/raw.${VFILETYPE}" >> "${BASEDIR}/${LOGFILE}" 2>&1
+    timeout -k 50s 3m rpicam-vid -n -t 210000 -o "${BASEDIR}/${TIMESTAMP}raw.${VFILETYPE}" >> "${BASEDIR}/${LOGFILE}" 2>&1
 
 
 # 3. Organize Data Output
@@ -85,7 +86,7 @@ while :; do
     # move and rename data files
     echo "Cataloging data files" >> "${BASEDIR}/${LOGFILE}"
     #mv data.txt "${BASEDIR}/data/data${FILEIDX}.txt"
-    mv "${BASEDIR}/raw.${VFILETYPE}" "${BASEDIR}/data/${TIMESTAMP}raw${FILEIDX}.${VFILETYPE}"
+    mv "${BASEDIR}/${TIMESTAMP}raw.${VFILETYPE}" "${BASEDIR}/data/${TIMESTAMP}raw${FILEIDX}.${VFILETYPE}"
 
     LOOPCOUNT=$((LOOPCOUNT + 1))
 
